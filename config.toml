@@ -49,10 +49,18 @@ plan_rules = """
 A task file is used to track progress and ensure the systematic execution of all required steps.
 
 - File path: `<project_name>/tasks/<task_name>-todo.md`
-- Step format: All actionable items must use Markdown checkboxes (`- [ ]`).
-- Granularity: Each checkbox must be granular enough to be completed and verified within a single session's context budget. Use the rule of thumb: one checkbox = one verification command.
+- Step format: All actionable items must be Markdown checkboxes formatted as `- [ ] <id>: <description>`, where `<id>` is a unique, greppable ID in `<phase>.<seq>` format (e.g., `- [ ] 4.9: Implement...`).
+- Granularity: Each checkbox must be granular enough to be completed and verified within a single session's context budget.
 - Progress tracking: Checkboxes must be ticked (`- [x]`) by the agents only after the corresponding step's verification has passed.
 - Definition of done: The task list must be a logical, step-by-step sequence that allows any subsequent agent to implement the specification without further explanation.
+
+### Checkbox discipline
+
+The task file must include a usage section that mandates the following tick protocol for the implementing agents:
+
+1. Run the step's verification command and keep its exact summary line.
+2. Tick only that step's checkbox using a search string containing the step ID to ensure only that line is matched.
+3. Verify the edit's diff: only the verified step's line may change, and it must read `- [x] <id> <description>`. If any other ID is affected, the tick must be reverted and redone.
 
 ### Session persistence
 
@@ -64,8 +72,7 @@ The following files are used to maintain operational continuity and preserve cri
   - A brief summary note for the next agent.
 
 - Notes file `<project_name>/tasks/<task_name>-notes.md` that agents must append to at the end of every session with a log containing:
-  - Technical findings and discoveries.
-  - Blockers encountered.
+  - Technical findings, discoveries, and blockers.
   - Environment-specific notes.
   - If the task is not completed, an explicit statement of the current status.
 """
