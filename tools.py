@@ -184,7 +184,7 @@ def read_file(agent, args):
         "content": {"type": "string", "description": "File content to write."},
         "append": {
             "type": "boolean",
-            "description": "If true, append content to the end of the file.",
+            "description": "If true, append content to the end of the file. Defaults to false.",
         },
     },
     ["path", "content"],
