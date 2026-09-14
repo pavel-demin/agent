@@ -7,6 +7,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from .core import LIGHT_THEME, Agent, Console, sub_agent_session
+
 MAX_READ_LINES = 500
 MAX_SEARCH_MATCHES = 100
 MAX_TREE_ENTRIES = 500
@@ -834,6 +836,37 @@ def tree(agent, args):
 
     result = f"tree for {p}:\n" + "\n".join(results)
     return result
+
+
+@tool(
+    "sub_agent",
+    "Execute an independent agent loop for a task. Returns the content of the final message.",
+    {
+        "task": {
+            "type": "string",
+            "description": "The task or instructions for the sub-agent to work on.",
+        },
+    },
+    ["task"],
+)
+def sub_agent(agent, args):
+    task = args.get("task", "")
+    if not isinstance(task, str) or not task.strip():
+        return tool_err("validation", "task must be a non-empty string")
+
+    path, sess, resumed = None, None, False
+    if agent.session_path:
+        path = agent.session_path.parent / f"sub-agent-{agent.session.id}.json"
+        sess, resumed = sub_agent_session(path, task)
+        print(f"  [sub_agent: {'resuming' if resumed else 'new'} session {path.name}]")
+    else:
+        print("  [sub_agent: new in-memory session]")
+
+    sub = Agent(agent.cfg, Console(theme=LIGHT_THEME), agent.model, execute, session=sess, session_path=path)
+    content, err = sub.turn(None if resumed else task, path)
+    if err:
+        return tool_err("api", err)
+    return content
 
 
 required_parameters = {t["function"]["name"]: t["function"]["parameters"]["required"] for t in tools}

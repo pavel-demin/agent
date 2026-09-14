@@ -11,8 +11,6 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.theme import Theme
 
-from .tools import execute, tools
-
 LIGHT_THEME = Theme(
     {
         "markdown.code": "#000000 on #cccccc",
@@ -51,8 +49,35 @@ def last_role(messages):
     return messages[-1].get("role")
 
 
+def pending_tool_calls(messages):
+    if not isinstance(messages, list) or not messages:
+        return []
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        calls = m.get("tool_calls") or []
+        if not calls:
+            return []
+        answered = {t.get("tool_call_id") for t in messages[i + 1 :] if isinstance(t, dict) and t.get("role") == "tool"}
+        return [tc for tc in calls if isinstance(tc, dict) and tc.get("id") not in answered]
+    return []
+
+
 def is_interrupted(messages):
-    return last_role(messages) in ("user", "tool")
+    return last_role(messages) in ("user", "tool") or bool(pending_tool_calls(messages))
+
+
+def sub_agent_session(path, task):
+    sess = Session.load(path)
+    if sess is not None and isinstance(sess.messages, list) and sess.messages and is_interrupted(sess.messages):
+        first = sess.messages[0]
+        if isinstance(first, dict) and first.get("role") == "user" and first.get("content") == task:
+            return sess, True
+
+    empty = Session()
+    empty.dump(path)
+    return empty, False
 
 
 class APIError(Exception):
@@ -113,7 +138,8 @@ class Agent:
 
     def turn(self, user_input, path):
         content, err = self.chat(user_input)
-        self.sync_session(path)
+        if path:
+            self.sync_session(path)
         return content, err
 
     def build_req(self, step):
@@ -142,6 +168,15 @@ class Agent:
         while True:
             if self.session_path:
                 self.sync_session(self.session_path)
+
+            if user_input is None:
+                pending = pending_tool_calls(self.messages)
+                if pending:
+                    print(f"  [resuming {len(pending)} interrupted tool call(s)]")
+                    for tc in pending:
+                        self.messages.append(self.execute(self, tc))
+                    step += 1
+                    continue
 
             req = self.build_req(step)
 
@@ -186,7 +221,7 @@ def load_config(path):
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
-def make_agent(cfg, key=None, session=None, sess_path=None):
+def make_agent(cfg, tools, execute, key=None, session=None, sess_path=None):
     if key is None:
         key = os.getenv("LLM_API_KEY")
     console = Console(theme=LIGHT_THEME)

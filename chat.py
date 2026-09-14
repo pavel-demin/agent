@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from .core import Session, cli_main, is_interrupted, last_role, load_config, make_agent
+from .core import Session, cli_main, is_interrupted, last_role, load_config, make_agent, pending_tool_calls
+from .tools import execute, tools
 
 
 def chat_and_sync(agent, user_input, sess_path):
@@ -11,6 +12,11 @@ def chat_and_sync(agent, user_input, sess_path):
 
 
 def resume(agent):
+    if pending_tool_calls(agent.messages):
+        if last_role(agent.messages) == "user":
+            agent.messages.pop()
+            print("  [resume] the message added after the interruption was dropped - retype it after resuming")
+        return None, True
     role = last_role(agent.messages)
     if role == "tool":
         return None, True
@@ -20,11 +26,9 @@ def resume(agent):
     return None, False
 
 
-def run(cfg_path, sess_path, prompt=None):
-    cfg = load_config(cfg_path)
-
+def run(cfg, sess_path, prompt=None):
     sess = Session.load(sess_path)
-    agent = make_agent(cfg, session=sess, sess_path=sess_path)
+    agent = make_agent(cfg, tools, execute, session=sess, sess_path=sess_path)
     if sess:
         print(f"Resuming session {sess.id}...")
 
@@ -76,8 +80,9 @@ def run(cfg_path, sess_path, prompt=None):
 
 def main(argv=None):
     def _run(args):
+        cfg = load_config(Path(args[0]))
         prompt = args[2] if len(args) == 3 else None
-        run(Path(args[0]), Path(args[1]), prompt)
+        run(cfg, Path(args[1]), prompt)
 
     cli_main(
         "Usage: python -m agent.chat <config.toml> <session.json> [prompt]",

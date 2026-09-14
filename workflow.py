@@ -4,11 +4,11 @@ import time
 from pathlib import Path
 
 from .core import Session, cli_main, is_interrupted, load_config, make_agent
+from .tools import execute, tools
 
 OPEN_BOX_RE = re.compile(r"^\s*- \[ \]", re.MULTILINE)
 STALL_LIMIT = 3
 SESSIONS_DIR = Path("sessions")
-SPEC_NOT_FOUND_MSG = "spec file not found: {path} - write the technical specification there first"
 
 
 def open_count(todo_path):
@@ -21,7 +21,7 @@ def transcript_paths(proj, task):
     return list(SESSIONS_DIR.glob(f"{proj}-{task}-*.json"))
 
 
-def spec_path(proj, task):
+def task_spec_path(proj, task):
     return Path(proj) / "tasks" / f"{task}-spec.md"
 
 
@@ -35,20 +35,6 @@ def is_interrupted_transcript(path):
     if not sess or not sess.messages:
         return False
     return is_interrupted(sess.messages)
-
-
-def build_plan_file(cfg, proj, task):
-    spec = spec_path(proj, task)
-    if not spec.is_file():
-        return None
-
-    plan = spec.read_text(encoding="utf-8")
-    rules = cfg["agent"]["plan_rules"]
-    rules = rules.replace("<project_name>", proj).replace("<task_name>", task)
-
-    plan_path = spec.parent / f"{task}-plan.md"
-    plan_path.write_text(f"{plan}\n{rules}", encoding="utf-8")
-    return plan_path
 
 
 def build_prompt(cfg, proj, task, todo_path, first, max_tokens):
@@ -65,18 +51,13 @@ def build_prompt(cfg, proj, task, todo_path, first, max_tokens):
 
 
 def run_session(cfg, sess_path, prompt, session=None):
-    agent = make_agent(cfg, session=session or Session(), sess_path=sess_path)
+    agent = make_agent(cfg, tools, execute, session=session or Session(), sess_path=sess_path)
     return agent.turn(prompt, sess_path)
 
 
-def run(cfg_path, proj, task, stall_limit=STALL_LIMIT):
-    cfg = load_config(cfg_path)
+def run(cfg, proj, task, stall_limit=STALL_LIMIT):
     tasks_dir = Path(proj) / "tasks"
     todo_path = tasks_dir / f"{task}-todo.md"
-
-    if not build_plan_file(cfg, proj, task):
-        print(SPEC_NOT_FOUND_MSG.format(path=spec_path(proj, task)))
-        return 2
 
     sessions_dir = SESSIONS_DIR
     sessions_dir.mkdir(parents=True, exist_ok=True)
@@ -116,7 +97,15 @@ def run(cfg_path, proj, task, stall_limit=STALL_LIMIT):
             session_no += 1
             sess_path = sessions_dir / f"{proj}-{task}-{time.strftime('%Y%m%d-%H%M%S')}.json"
             if not todo_path.is_file():
-                prompt = f"Please read '{tasks_dir / f'{task}-plan.md'}' and start preparing a plan (task file) according to the specifications described in this file."
+                spec_path = task_spec_path(proj, task)
+                spec = spec_path.read_text(encoding="utf-8")
+                rules = cfg["agent"]["plan_rules"]
+                rules = rules.replace("<project_name>", proj).replace("<task_name>", task)
+
+                if rules not in spec:
+                    spec_path.write_text(f"{spec}\n{rules}", encoding="utf-8")
+
+                prompt = f"Please read '{spec_path}' and start preparing a plan (task file) according to the specifications described in this file."
             else:
                 first = prior_sessions <= 1 and session_no == 2
                 prompt = build_prompt(cfg, proj, task, todo_path, first, max_tokens)
@@ -153,11 +142,12 @@ def run(cfg_path, proj, task, stall_limit=STALL_LIMIT):
 
 def main(argv: list[str] | None = None):
     def _run(args):
-        spec = spec_path(args[1], args[2])
-        if not spec.is_file():
-            print(SPEC_NOT_FOUND_MSG.format(path=spec))
+        cfg = load_config(Path(args[0]))
+        spec_path = task_spec_path(args[1], args[2])
+        if not spec_path.is_file():
+            print(f"spec file not found: {spec_path} - write the technical specification there first")
             sys.exit(1)
-        run(Path(args[0]), args[1], args[2])
+        run(cfg, args[1], args[2])
 
     cli_main(
         "Usage: python -m agent.workflow <config.toml> <project_name> <task_name>",
