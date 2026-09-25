@@ -37,17 +37,12 @@ def is_interrupted_transcript(path):
     return is_interrupted(sess.messages)
 
 
-def build_prompt(cfg, proj, task, todo_path, first, max_tokens):
+def build_prompt(cfg, proj, task, todo_path, first):
     verb = "start" if first else "continue"
-    limit = int(0.8 * max_tokens)
-    parts = [
-        f"Please read '{todo_path}' and {verb} working on the tasks from this file.",
-        f"Context budget is {max_tokens} tokens. You will be prompted to finish at 80% (about {limit} tokens). Plan accordingly.",
-    ]
+    prompt = f"Please read '{todo_path}' and {verb} working on the tasks from this file."
     rules = cfg["agent"]["work_rules"]
     rules = rules.replace("<project_name>", proj).replace("<task_name>", task)
-    parts.append(rules.rstrip("\n"))
-    return "\n\n".join(parts)
+    return f"{prompt}\n{rules}"
 
 
 def run_session(cfg, sess_path, prompt, session=None):
@@ -62,7 +57,6 @@ def run(cfg, proj, task, stall_limit=STALL_LIMIT):
     sessions_dir = SESSIONS_DIR
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    max_tokens = cfg["agent"]["max_tokens"]
     prior_sessions = len(transcript_paths(proj, task))
 
     resumed_path = None
@@ -108,7 +102,7 @@ def run(cfg, proj, task, stall_limit=STALL_LIMIT):
                 prompt = f"Please read '{spec_path}' and start preparing a plan (task file) according to the specifications described in this file."
             else:
                 first = prior_sessions <= 1 and session_no == 2
-                prompt = build_prompt(cfg, proj, task, todo_path, first, max_tokens)
+                prompt = build_prompt(cfg, proj, task, todo_path, first)
             resumed = False
 
         _, err = run_session(cfg, sess_path, prompt, session=loaded if resumed else None)

@@ -43,7 +43,7 @@ Acceptance Tests are executable validation activities derived from the Acceptanc
 
 ### 2.3. Execution Stage
 
-#### 2.3.1. Sequential Verification (Level by Level)
+#### 2.3.1. Sequential Implementation and Verification (Level by Level)
 
 For each implementation level involved (Component, Architecture, System; apply only those involved), climbing in the order Component -> Architecture -> System:
 
@@ -88,6 +88,10 @@ The **active project** is the one the user references (by path or by name) in th
 ### 3.6. Command Execution
 
 For project-specific operations, use `cd <project_dir> && <command>`, where `<project_dir>` is the directory path corresponding to the active project.
+
+### 3.7. Context Budget
+
+Context budget is <max_tokens> tokens. You will be prompted to finish at 80% (about <warn_tokens> tokens). Plan accordingly.
 """
 
 plan_rules = """
