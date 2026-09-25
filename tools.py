@@ -573,6 +573,8 @@ def rename_file(agent, args):
     src = Path(args["src"])
     dst = Path(args["dst"])
     try:
+        if src.is_dir():
+            return tool_err("validation", f"cannot rename directory '{src}': source must be a file")
         if not src.is_file():
             return tool_err("not found", f"source not found: {src}")
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -854,13 +856,9 @@ def sub_agent(agent, args):
     if not isinstance(task, str) or not task.strip():
         return tool_err("validation", "task must be a non-empty string")
 
-    path, sess, resumed = None, None, False
-    if agent.session_path:
-        path = agent.session_path.parent / f"sub-agent-{agent.session.id}.json"
-        sess, resumed = sub_agent_session(path, task)
-        print(f"  [sub_agent: {'resuming' if resumed else 'new'} session {path.name}]")
-    else:
-        print("  [sub_agent: new in-memory session]")
+    path = agent.session_path.parent / f"sub-agent-{agent.session.id}.json"
+    sess, resumed = sub_agent_session(path, task)
+    print(f"  [sub_agent: {'resuming' if resumed else 'new'} session {path.name}]")
 
     sub = Agent(agent.cfg, Console(theme=LIGHT_THEME), agent.model, execute, session=sess, session_path=path)
     content, err = sub.turn(None if resumed else task, path)
@@ -881,10 +879,22 @@ def arg_repr(v):
 
 
 def execute(agent, tool_call):
-    tool_call_id = tool_call["id"]
-    name = tool_call["function"]["name"]
+    if not isinstance(tool_call, dict):
+        tool_call = {}
+    tool_call_id = tool_call.get("id")
+    if not isinstance(tool_call_id, str):
+        tool_call_id = ""
+    function = tool_call.get("function")
+    if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "name": "",
+            "content": tool_err("validation", "malformed tool call: missing 'function'"),
+        }
+    name = function["name"]
     try:
-        args = json.loads(tool_call["function"]["arguments"])
+        args = json.loads(function.get("arguments"))
     except (json.JSONDecodeError, TypeError):
         args = {}
 

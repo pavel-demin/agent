@@ -3,6 +3,7 @@ import os
 import sys
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -113,9 +114,15 @@ class Agent:
         self.console = console
         self.model = model
         self.execute = execute
-        self.system_prompt = self.cfg["prompt"].rstrip()
-        self.session_path = session_path
+        self.max_tokens = cfg["max_tokens"]
+        self.warn_tokens = int(0.8 * self.max_tokens)
+        prompt = self.cfg["prompt"].rstrip()
+        prompt = prompt.replace("<max_tokens>", str(self.max_tokens)).replace("<warn_tokens>", str(self.warn_tokens))
+        self.system_prompt = prompt
         self.reset(session)
+        if session_path is None:
+            session_path = Path("sessions") / f"session-{self.session.id}.json"
+        self.session_path = session_path
 
     def sync_session(self, path):
         self.session.messages = self.messages
@@ -136,15 +143,16 @@ class Agent:
     def note(self, text):
         self.messages.append({"role": "user", "content": text})
 
-    def turn(self, user_input, path):
+    def turn(self, user_input, path=None):
         content, err = self.chat(user_input)
-        if path:
-            self.sync_session(path)
+        if path is None:
+            path = self.session_path
+        self.sync_session(path)
         return content, err
 
     def build_req(self, step):
-        pct = round(100 * self.prompt_tokens / self.cfg["max_tokens"])
-        if self.prompt_tokens >= 0.8 * self.cfg["max_tokens"]:
+        pct = round(100 * self.prompt_tokens / self.max_tokens)
+        if self.prompt_tokens >= self.warn_tokens:
             self.note(f"[SYSTEM: Context size is {pct}%. Limit reached. Finish in the fewest possible steps.]")
         elif step > 0 and step % 10 == 0 and self.prompt_tokens > 0:
             self.note(f"[SYSTEM: Context size is {pct}%.]")
@@ -166,14 +174,14 @@ class Agent:
 
         step = 0
         while True:
-            if self.session_path:
-                self.sync_session(self.session_path)
+            self.sync_session(self.session_path)
 
             if user_input is None:
                 pending = pending_tool_calls(self.messages)
                 if pending:
                     print(f"  [resuming {len(pending)} interrupted tool call(s)]")
                     for tc in pending:
+                        self.sync_session(self.session_path)
                         self.messages.append(self.execute(self, tc))
                     step += 1
                     continue
@@ -182,20 +190,27 @@ class Agent:
 
             resp = self.model.call(req, True)
 
-            if not resp.get("choices"):
+            msg = None
+            choices = resp.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                candidate = choices[0].get("message")
+                if isinstance(candidate, dict) and "role" in candidate:
+                    msg = candidate
+            if msg is None:
                 error_info = resp.get("error", str(resp))
                 print(f"  [API error response: {error_info}]")
                 return "", f"API error: {error_info}"
-
-            msg = resp["choices"][0]["message"]
             content = msg.get("content", "")
             tool_calls = msg.get("tool_calls", [])
             usage = resp.get("usage", {})
             self.prompt_tokens = usage.get("prompt_tokens", 0)
-            hit_tokens = usage.get("prompt_cache_hit_tokens", 0)
-            miss_tokens = usage.get("prompt_cache_miss_tokens", 0)
+            prompt_tokens_details = usage.get("prompt_tokens_details", None)
+            if prompt_tokens_details:
+                cached_tokens = prompt_tokens_details.get("cached_tokens", 0)
+            else:
+                cached_tokens = usage.get("prompt_cache_hit_tokens", 0)
 
-            print(f"  [size: {self.prompt_tokens} hit: {hit_tokens} miss: {miss_tokens} max: {self.cfg['max_tokens']}]")
+            print(f"  [size: {self.prompt_tokens} cached: {cached_tokens} max: {self.max_tokens}]")
 
             assistant_msg = {"role": msg["role"], "content": content}
             for key in ("reasoning", "reasoning_content"):
@@ -212,6 +227,7 @@ class Agent:
 
             print("  [tool calls]")
             for tc in tool_calls:
+                self.sync_session(self.session_path)
                 self.messages.append(self.execute(self, tc))
 
             step += 1
